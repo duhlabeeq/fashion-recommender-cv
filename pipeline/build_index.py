@@ -37,10 +37,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 
+MODEL_ID = 'patrickjohncyh/fashion-clip'
+
 def load_fclip():
-    from fashion_clip.fashion_clip import FashionCLIP
+    import torch
+    from transformers import CLIPModel, CLIPProcessor
     print("Loading FashionCLIP model...")
-    return FashionCLIP('fashion-clip')
+    processor = CLIPProcessor.from_pretrained(MODEL_ID)
+    model = CLIPModel.from_pretrained(MODEL_ID)
+    model.eval()
+    return model, processor
 
 
 def remove_background(image_array):
@@ -74,13 +80,13 @@ def build_index(dataset_dir, output_dir, remove_bg=False, batch_size=32):
     categories = sorted({c for _, c in items})
     print(f"Found {len(items)} images across {len(categories)} categories: {categories}")
 
-    fclip = load_fclip()
+    import torch
+    model, processor = load_fclip()
 
     all_embeddings = []
     all_paths = []
     failed = 0
 
-    # Process in batches per category for efficiency
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
         pil_images = []
@@ -100,7 +106,10 @@ def build_index(dataset_dir, output_dir, remove_bg=False, batch_size=32):
         if not pil_images:
             continue
 
-        embeddings = fclip.encode_images(pil_images, batch_size=batch_size)
+        inputs = processor(images=pil_images, return_tensors="pt")
+        with torch.no_grad():
+            embeddings = model.vision_model(pixel_values=inputs['pixel_values']).pooler_output.cpu().numpy()
+
         all_embeddings.append(embeddings)
         all_paths.extend(valid_items)
 

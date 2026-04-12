@@ -10,24 +10,32 @@ from PIL import Image
 from rembg import remove
 
 # ---------------------------------------------------------------------------
-# FashionCLIP — lazy-loaded singleton (downloads model on first call)
+# FashionCLIP — lazy-loaded via transformers (no fashion-clip package needed)
 # ---------------------------------------------------------------------------
-_fclip = None
+_model = None
+_processor = None
+MODEL_ID = 'patrickjohncyh/fashion-clip'
 
-def _get_fclip():
-    global _fclip
-    if _fclip is None:
-        from fashion_clip.fashion_clip import FashionCLIP
-        _fclip = FashionCLIP('fashion-clip')
-    return _fclip
+def _get_model():
+    global _model, _processor
+    if _model is None:
+        import torch
+        from transformers import CLIPModel, CLIPProcessor
+        _processor = CLIPProcessor.from_pretrained(MODEL_ID)
+        _model = CLIPModel.from_pretrained(MODEL_ID)
+        _model.eval()
+    return _model, _processor
 
 
 def extract_img(image_array):
     """Extract a 512-dim FashionCLIP embedding from a numpy RGB image."""
-    fclip = _get_fclip()
+    import torch
+    model, processor = _get_model()
     pil_img = Image.fromarray(image_array).convert("RGB")
-    embedding = fclip.encode_images([pil_img], batch_size=1)  # (1, 512)
-    return embedding.astype('float32')
+    inputs = processor(images=pil_img, return_tensors="pt")
+    with torch.no_grad():
+        embedding = model.vision_model(pixel_values=inputs['pixel_values']).pooler_output
+    return embedding.cpu().numpy().astype('float32')
 
 
 # ---------------------------------------------------------------------------
