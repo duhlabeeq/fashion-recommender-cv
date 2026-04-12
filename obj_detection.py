@@ -86,6 +86,7 @@ class ObjDetection():
 
             # crop item from image
             cropped_obj = image[y1:y2, x1:x2].copy()
-            cropped_objects.append(cropped_obj)
+            class_name = self.labels[classes[ind]]
+            cropped_objects.append((cropped_obj, class_name))
 
-        return cropped_objects
+        return cropped_objects if cropped_objects else None

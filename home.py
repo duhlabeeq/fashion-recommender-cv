@@ -1,14 +1,13 @@
-import streamlit as st
-import numpy as np
+import os
 import pickle
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 
+import numpy as np
+import streamlit as st
 from obj_detection import ObjDetection
 from PIL import Image
-from torchvision import transforms
 
-from src.utilities import ExactIndex, extract_img, similar_img_search, display_image, visualize_nearest_neighbors, visualize_outfits
+from src.utilities import (ExactIndex, extract_img, visualize_outfits,
+                           remove_bg, build_category_indices, complementary_search)
 
 
 # --- UI Configurations --- #
@@ -31,25 +30,27 @@ with st.spinner('Please wait while your model is loading'):
     yolo = ObjDetection(onnx_model='./models/best.onnx',
                         data_yaml='./models/data.yaml')
     
-index_path = "flatIndex.index"
+INDEX_READY = (
+    os.path.exists("flatIndex.index") and
+    os.path.exists("img_paths.pkl") and
+    os.path.exists("embeddings.pkl")
+)
 
-with open("img_paths.pkl", "rb") as im_file:
-    image_paths = pickle.load(im_file)
-
-with open("embeddings.pkl", "rb") as file:
-    embeddings = pickle.load(file)
-
-def load_index(embeddings, image_paths, index_path):
-    loaded_idx = ExactIndex.load(embeddings, image_paths, index_path)
-    return loaded_idx
-
-loaded_idx = ExactIndex.load(embeddings, image_paths, index_path)
-
-# --- Image Functions --- #
-transformations = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
+if INDEX_READY:
+    with open("img_paths.pkl", "rb") as im_file:
+        image_paths = pickle.load(im_file)
+    with open("embeddings.pkl", "rb") as file:
+        embeddings = pickle.load(file)
+    loaded_idx = ExactIndex.load(embeddings, image_paths, "flatIndex.index")
+    with st.spinner('Building category indices...'):
+        cat_indices = build_category_indices(embeddings, image_paths)
+else:
+    st.warning(
+        "No index found. Run `python pipeline/build_index.py --dataset <your_dataset>` "
+        "to build the index before using recommendations.",
+        icon="⚠️"
+    )
+    cat_indices = {}
 
 def upload_image():
     image_file = st.file_uploader(label='Upload Image')
@@ -68,45 +69,44 @@ def main():
         prediction = False
         image_obj = Image.open(object)
         st.image(image_obj)
-        button = st.button('Show Recommendations')
+        button = st.button('Show Recommendations', disabled=not INDEX_READY)
         if button:
-            with st.spinner(""" Detecting Fashion Objects from Image. Please Wait. """):
-                image_array = np.array(image_obj)
+            with st.spinner("Detecting fashion items from image..."):
+                image_array = np.array(image_obj.convert("RGB"))
                 cropped_objs = yolo.crop_objects(image_array)
                 if cropped_objs is not None:
-                    prediction = True
+                    # Filter out empty crops
+                    cropped_objs = [(obj, cls) for obj, cls in cropped_objs if obj.size > 0]
+                    if cropped_objs:
+                        prediction = True
+                    else:
+                        st.caption("No fashion objects detected.")
                 else:
                     st.caption("No fashion objects detected.")
 
         if prediction:
-            cropped_objs = [obj for obj in cropped_objs if obj.size > 0]
+            # Show detected items and their classes
+            detected_labels = [cls for _, cls in cropped_objs]
+            st.caption(f":rainbow[Detected:] {', '.join(detected_labels)}")
 
-            # The following comments visualized detected fashion objects
-            # st.caption(":rainbow[Detected Fashion Objects]")  
-            # if len(cropped_objs) == 1:
-            #    st.image(cropped_objs[0])
-            #else:
-                # If there's more than one images
-            #    fig, axes = plt.subplots(1, len(cropped_objs), figsize=(15, 3))
-            #    for i, obj in enumerate(cropped_objs):
-            #            axes[i].imshow(obj)
-            #            axes[i].axis('off')         
-            #    st.pyplot(fig)
+            with st.spinner("Removing backgrounds and finding complementary items..."):
+                all_boards = []
+                for obj, class_name in cropped_objs:
+                    # Step 1: remove background
+                    obj_clean = remove_bg(obj)
 
-            # st.caption(":rainbow[Recommended Items]")
-            with st.spinner("Finding similar items ..."):
-                boards = []
-                for i, obj in enumerate(cropped_objs):
-                    embedding = extract_img(obj, transformations)
-                    selected_neighbor_paths = similar_img_search(embedding, loaded_idx)
-                    boards.append(selected_neighbor_paths)
+                    # Step 2: extract embedding
+                    embedding = extract_img(obj_clean)
 
-                # Flatten list of lists into a single list of paths
-                all_boards = [path for sublist in boards for path in sublist]
+                    # Step 3: find complementary items (not similar ones)
+                    comp_paths = complementary_search(embedding, cat_indices, class_name, k=3)
+                    all_boards.extend(comp_paths)
 
-                # Visualize recommended outfits
-                rec_fig = visualize_outfits(all_boards)
-                st.pyplot(rec_fig)
+                if all_boards:
+                    rec_fig = visualize_outfits(all_boards)
+                    st.pyplot(rec_fig)
+                else:
+                    st.warning("No complementary items found for the detected garment type.")
 
 if __name__ == "__main__":
     main()
