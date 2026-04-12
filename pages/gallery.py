@@ -40,33 +40,31 @@ def load_gallery_history():
 history = load_gallery_history()
 
 if not history:
-    st.info("No saved sessions yet. Use the **Home** page to get recommendations and click **Save to Gallery**.", icon="👈🏼")
+    st.info("No saved sessions yet. Use the **Home** page and click **Save to Gallery**.", icon="👈🏼")
 else:
-    st.markdown("### Your Saved Sessions")
+    st.markdown("### Saved Sessions")
     for entry in history:
-        with st.expander(f"Session {entry['id']}  ·  {entry['timestamp']}", expanded=False):
-            left, right = st.columns([1, 4])
+        st.markdown(f"**{entry['timestamp']}**")
 
-            with left:
-                if os.path.exists(entry["input_path"]):
-                    st.image(entry["input_path"], caption="Input", use_column_width=True)
+        # Row: input | detected items | 6 recommendations
+        input_col, det_cols_area, rec_cols_area = st.columns([1, 1, 6])
 
-            with right:
-                # Detected items row
-                if entry.get("detected"):
-                    st.markdown("**Detected Items**")
-                    det_cols = st.columns(len(entry["detected"]))
-                    for col, (det_path, cls) in zip(det_cols, entry["detected"]):
-                        with col:
-                            if os.path.exists(det_path):
-                                st.image(det_path, caption=cls, use_column_width=True)
+        with input_col:
+            if os.path.exists(entry["input_path"]):
+                st.image(entry["input_path"], caption="Input", use_column_width=True)
 
-                # Recommendations row
-                rec_paths = [p for p in entry.get("rec_paths", []) if os.path.exists(p)]
-                if rec_paths:
-                    st.markdown("**Recommendations**")
-                    rec_cols = st.columns(len(rec_paths))
-                    for col, path in zip(rec_cols, rec_paths):
-                        with col:
-                            cat = os.path.basename(os.path.dirname(path))
+        with det_cols_area:
+            for det_path, cls in entry.get("detected", []):
+                if os.path.exists(det_path):
+                    st.image(det_path, caption=cls, use_column_width=True)
+
+        with rec_cols_area:
+            rec_items = entry.get("rec_items", [])
+            if rec_items:
+                rec_subcols = st.columns(len(rec_items))
+                for col, (path, cat) in zip(rec_subcols, rec_items):
+                    with col:
+                        if os.path.exists(path):
                             st.image(path, caption=cat, use_column_width=True)
+
+        st.divider()

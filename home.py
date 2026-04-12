@@ -24,15 +24,14 @@ def save_gallery_history(history):
     with open(GALLERY_HISTORY_FILE, "wb") as f:
         pickle.dump(history, f)
 
-def save_session_to_gallery(uploaded_image, detected_objs, rec_paths):
+def save_session_to_gallery(input_array, detected_objs, rec_paths):
     os.makedirs(GALLERY_DATA_DIR, exist_ok=True)
     session_id = str(uuid.uuid4())[:8]
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # Save uploaded image
+    # Save uploaded image (from numpy array stored in session state)
     input_path = os.path.join(GALLERY_DATA_DIR, f"{session_id}_input.jpg")
-    pil_img = Image.fromarray(np.array(uploaded_image.convert("RGB")))
-    pil_img.save(input_path)
+    Image.fromarray(input_array).save(input_path)
 
     # Save detected (bg-removed) items
     detected_paths = []
@@ -41,12 +40,23 @@ def save_session_to_gallery(uploaded_image, detected_objs, rec_paths):
         Image.fromarray(arr).save(det_path)
         detected_paths.append((det_path, cls))
 
+    # Copy recommendation images into gallery_data so they're self-contained
+    rec_saved = []
+    for j, src in enumerate(rec_paths):
+        cat = os.path.basename(os.path.dirname(src))
+        dst = os.path.join(GALLERY_DATA_DIR, f"{session_id}_rec_{j}_{cat}.jpg")
+        try:
+            Image.open(src).convert("RGB").save(dst)
+            rec_saved.append((dst, cat))
+        except Exception:
+            pass
+
     entry = {
         "id": session_id,
         "timestamp": timestamp,
         "input_path": input_path,
         "detected": detected_paths,
-        "rec_paths": rec_paths,
+        "rec_items": rec_saved,  # list of (path, category)
     }
 
     history = load_gallery_history()
@@ -112,11 +122,15 @@ def main():
         st.session_state.detected_objs = None
     if 'recommendations' not in st.session_state:
         st.session_state.recommendations = None
+    if 'input_array' not in st.session_state:
+        st.session_state.input_array = None
 
     uploaded = upload_image()
 
     if uploaded:
         image_obj = Image.open(uploaded)
+        # Store as numpy array so it survives button reruns
+        st.session_state.input_array = np.array(image_obj.convert("RGB"))
         st.image(image_obj)
 
         # --- Step 1: Detect + Remove Background ---
@@ -175,11 +189,11 @@ def main():
                 st.divider()
                 if st.button("💾 Save to Gallery"):
                     save_session_to_gallery(
-                        image_obj,
+                        st.session_state.input_array,
                         st.session_state.detected_objs,
                         st.session_state.recommendations
                     )
-                    st.success("Saved to gallery!", icon="✅")
+                    st.success("Saved! Check the Gallery page in the sidebar.", icon="✅")
 
 if __name__ == "__main__":
     main()
