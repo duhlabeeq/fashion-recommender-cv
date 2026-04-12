@@ -178,22 +178,24 @@ def main():
                     st.session_state.recommendations = all_boards[:6]
 
             if st.session_state.get('recommendations'):
-                st.markdown("#### Recommended Items")
+                col_title, col_btn = st.columns([3, 1])
+                with col_title:
+                    st.markdown("#### Recommended Items")
+                with col_btn:
+                    if st.button("💾 Save to Gallery", use_container_width=True):
+                        save_session_to_gallery(
+                            st.session_state.input_array,
+                            st.session_state.detected_objs,
+                            st.session_state.recommendations
+                        )
+                        st.success("Saved! Check the Gallery page.", icon="✅")
+
                 rec_cols = st.columns(6)
                 for col, path in zip(rec_cols, st.session_state.recommendations):
                     with col:
                         st.image(path, use_column_width=True)
                         cat = os.path.basename(os.path.dirname(path))
                         st.caption(cat)
-
-                st.divider()
-                if st.button("💾 Save to Gallery"):
-                    save_session_to_gallery(
-                        st.session_state.input_array,
-                        st.session_state.detected_objs,
-                        st.session_state.recommendations
-                    )
-                    st.success("Saved! Check the Gallery page in the sidebar.", icon="✅")
 
 if __name__ == "__main__":
     main()
