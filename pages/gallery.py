@@ -1,66 +1,72 @@
+import os
+import pickle
+
 import streamlit as st
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 
-from src.utilities import viz_thumbnail
-
-st.set_page_config(page_title="Gallery",
-                   page_icon=":shopping_bags:")
+st.set_page_config(page_title="Gallery", page_icon=":shopping_bags:")
 
 st.markdown("# :female_fairy: :frame_with_picture:")
 st.markdown("# :rainbow[App Gallery] :magic_wand:")
+st.divider()
 
-# Load your images
-# pink-white
-pw_path = 'gallery/sample_query/pink-white/pw_1.jpg'
+# --- Sample outfits section ---
+st.markdown("### Sample Outfits")
+st.write("Try uploading one of these on the Home page.")
 
-# black-coat
-bc_path = 'gallery/sample_query/black-coat/bc_1.jpg'
+outfits = [
+    ("Pink & White",    "gallery/sample_query/pink-white/pw_1.jpg"),
+    ("Black Coat",      "gallery/sample_query/black-coat/bc_1.jpg"),
+    ("Sweater & Skirt", "gallery/sample_query/sweater-skirt/ss_1.jpg"),
+    ("Black Jacket",    "gallery/sample_query/black-jacket/bk_1.jpg"),
+]
 
-# sweater-skirt
-ss_path = 'gallery/sample_query/sweater-skirt/ss_1.jpg'
+cols = st.columns(4)
+for col, (label, path) in zip(cols, outfits):
+    with col:
+        st.image(path, use_column_width=True)
+        st.caption(label)
 
-# black-jacket
-bk_path = 'gallery/sample_query/black-jacket/bk_1.jpg'
+st.divider()
 
-#Set the size for thumbnail
-thumbnail_size = (10, 10)
+# --- Saved sessions section ---
+GALLERY_HISTORY_FILE = "gallery_history.pkl"
 
-tab1, tab2, tab3, tab4 = st.tabs(['Outfit 1','Outfit 2','Outfit 3', 'Outfit 4'])
+def load_gallery_history():
+    if os.path.exists(GALLERY_HISTORY_FILE):
+        with open(GALLERY_HISTORY_FILE, "rb") as f:
+            return pickle.load(f)
+    return []
 
-with tab1:
-    st.markdown("#### :rainbow[Query Image:]")
-    fig1 = viz_thumbnail(pw_path, thumbnail_size)
-    st.pyplot(fig1)
-    st.divider()
-    st.markdown("#### :rainbow[Recommendations:]")
-    st.image('gallery/sample_results/pink-white/pw_im1.png')
-    st.image('gallery/sample_results/pink-white/pw_im2.png')
+history = load_gallery_history()
 
-with tab2:
-    st.markdown("#### :rainbow[Query Image:]")
-    fig2 = viz_thumbnail(bc_path, thumbnail_size)
-    st.pyplot(fig2)
-    st.divider()
-    st.markdown("#### :rainbow[Recommendations:]")
-    st.image('gallery/sample_results/black-coat/bc_im1.png')
-    st.image('gallery/sample_results/black-coat/bc_im2.png')
-    
-with tab3:
-    st.markdown("#### :rainbow[Query Image:]")
-    fig3 = viz_thumbnail(ss_path, thumbnail_size)
-    st.pyplot(fig3)
-    st.divider()
-    st.markdown("#### :rainbow[Recommendations:]")
-    st.image('gallery/sample_results/sweater/ss_im1.png')
-    st.image('gallery/sample_results/sweater/ss_im2.png')
+if not history:
+    st.info("No saved sessions yet. Use the **Home** page to get recommendations and click **Save to Gallery**.", icon="👈🏼")
+else:
+    st.markdown("### Your Saved Sessions")
+    for entry in history:
+        with st.expander(f"Session {entry['id']}  ·  {entry['timestamp']}", expanded=False):
+            left, right = st.columns([1, 4])
 
-with tab4:
-    st.markdown("#### :rainbow[Query Image:]")
-    fig4 = viz_thumbnail(bk_path, thumbnail_size)
-    st.pyplot(fig4)
-    st.divider()
-    st.markdown("#### :rainbow[Recommendations:]")
-    st.image('gallery/sample_results/black-jacket/bk_im1.png')
-    st.image('gallery/sample_results/black-jacket/bk_im2.png')
+            with left:
+                if os.path.exists(entry["input_path"]):
+                    st.image(entry["input_path"], caption="Input", use_column_width=True)
+
+            with right:
+                # Detected items row
+                if entry.get("detected"):
+                    st.markdown("**Detected Items**")
+                    det_cols = st.columns(len(entry["detected"]))
+                    for col, (det_path, cls) in zip(det_cols, entry["detected"]):
+                        with col:
+                            if os.path.exists(det_path):
+                                st.image(det_path, caption=cls, use_column_width=True)
+
+                # Recommendations row
+                rec_paths = [p for p in entry.get("rec_paths", []) if os.path.exists(p)]
+                if rec_paths:
+                    st.markdown("**Recommendations**")
+                    rec_cols = st.columns(len(rec_paths))
+                    for col, path in zip(rec_cols, rec_paths):
+                        with col:
+                            cat = os.path.basename(os.path.dirname(path))
+                            st.image(path, caption=cat, use_column_width=True)
