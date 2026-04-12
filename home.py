@@ -1,14 +1,67 @@
-import streamlit as st
-import numpy as np
+import os
 import pickle
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
+import uuid
+from datetime import datetime
 
+import numpy as np
+import streamlit as st
 from obj_detection import ObjDetection
 from PIL import Image
-from torchvision import transforms
 
-from src.utilities import ExactIndex, extract_img, similar_img_search, display_image, visualize_nearest_neighbors, visualize_outfits
+from src.utilities import (ExactIndex, extract_img, visualize_outfits,
+                           remove_bg, build_category_indices, complementary_search)
+
+GALLERY_DATA_DIR = "gallery_data"
+GALLERY_HISTORY_FILE = "gallery_history.pkl"
+
+def load_gallery_history():
+    if os.path.exists(GALLERY_HISTORY_FILE):
+        with open(GALLERY_HISTORY_FILE, "rb") as f:
+            return pickle.load(f)
+    return []
+
+def save_gallery_history(history):
+    with open(GALLERY_HISTORY_FILE, "wb") as f:
+        pickle.dump(history, f)
+
+def save_session_to_gallery(input_array, detected_objs, rec_paths):
+    os.makedirs(GALLERY_DATA_DIR, exist_ok=True)
+    session_id = str(uuid.uuid4())[:8]
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Save input image
+    input_path = os.path.join(GALLERY_DATA_DIR, f"{session_id}_input.jpg")
+    Image.fromarray(input_array).save(input_path)
+
+    # Save detected (bg-removed) items
+    detected_paths = []
+    for i, (arr, cls) in enumerate(detected_objs):
+        det_path = os.path.join(GALLERY_DATA_DIR, f"{session_id}_detected_{i}_{cls}.jpg")
+        Image.fromarray(arr).save(det_path)
+        detected_paths.append((det_path, cls))
+
+    # Copy recommendation images into gallery_data so they're self-contained
+    rec_saved = []
+    for j, src in enumerate(rec_paths):
+        cat = os.path.basename(os.path.dirname(src))
+        dst = os.path.join(GALLERY_DATA_DIR, f"{session_id}_rec_{j}_{cat}.jpg")
+        try:
+            Image.open(src).convert("RGB").save(dst)
+            rec_saved.append((dst, cat))
+        except Exception:
+            pass
+
+    entry = {
+        "id": session_id,
+        "timestamp": timestamp,
+        "input_path": input_path,
+        "detected": detected_paths,
+        "rec_items": rec_saved,
+    }
+
+    history = load_gallery_history()
+    history.insert(0, entry)
+    save_gallery_history(history)
 
 
 # --- UI Configurations --- #
@@ -30,26 +83,28 @@ st.info("Check out the gallery in sidebar to get some ideas", icon="👈🏼")
 with st.spinner('Please wait while your model is loading'):
     yolo = ObjDetection(onnx_model='./models/best.onnx',
                         data_yaml='./models/data.yaml')
-    
-index_path = "flatIndex.index"
 
-with open("img_paths.pkl", "rb") as im_file:
-    image_paths = pickle.load(im_file)
+INDEX_READY = (
+    os.path.exists("flatIndex.index") and
+    os.path.exists("img_paths.pkl") and
+    os.path.exists("embeddings.pkl")
+)
 
-with open("embeddings.pkl", "rb") as file:
-    embeddings = pickle.load(file)
-
-def load_index(embeddings, image_paths, index_path):
-    loaded_idx = ExactIndex.load(embeddings, image_paths, index_path)
-    return loaded_idx
-
-loaded_idx = ExactIndex.load(embeddings, image_paths, index_path)
-
-# --- Image Functions --- #
-transformations = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
+if INDEX_READY:
+    with open("img_paths.pkl", "rb") as im_file:
+        image_paths = pickle.load(im_file)
+    with open("embeddings.pkl", "rb") as file:
+        embeddings = pickle.load(file)
+    loaded_idx = ExactIndex.load(embeddings, image_paths, "flatIndex.index")
+    with st.spinner('Building category indices...'):
+        cat_indices = build_category_indices(embeddings, image_paths)
+else:
+    st.warning(
+        "No index found. Run `python pipeline/build_index.py --dataset <your_dataset>` "
+        "to build the index before using recommendations.",
+        icon="⚠️"
+    )
+    cat_indices = {}
 
 def upload_image():
     image_file = st.file_uploader(label='Upload Image')
@@ -62,51 +117,84 @@ def upload_image():
 
 # --- Object Detection and Recommendations --- #
 def main():
-    object = upload_image()
+    # Session state for 2-step flow
+    if 'detected_objs' not in st.session_state:
+        st.session_state.detected_objs = None
+    if 'recommendations' not in st.session_state:
+        st.session_state.recommendations = None
+    if 'input_array' not in st.session_state:
+        st.session_state.input_array = None
 
-    if object:
-        prediction = False
-        image_obj = Image.open(object)
+    uploaded = upload_image()
+
+    if uploaded:
+        image_obj = Image.open(uploaded)
+        # Store as numpy array so it survives button reruns
+        st.session_state.input_array = np.array(image_obj.convert("RGB"))
         st.image(image_obj)
-        button = st.button('Show Recommendations')
-        if button:
-            with st.spinner(""" Detecting Fashion Objects from Image. Please Wait. """):
-                image_array = np.array(image_obj)
+
+        # --- Step 1: Detect + Remove Background ---
+        if st.button('Detect Items'):
+            with st.spinner("Detecting items and removing backgrounds..."):
+                image_array = np.array(image_obj.convert("RGB"))
                 cropped_objs = yolo.crop_objects(image_array)
-                if cropped_objs is not None:
-                    prediction = True
+                if cropped_objs:
+                    cropped_objs = [(obj, cls) for obj, cls in cropped_objs if obj.size > 0]
+                if cropped_objs:
+                    cleaned = []
+                    for obj, cls in cropped_objs:
+                        clean = remove_bg(obj)
+                        non_white = np.mean(clean < 250)
+                        if non_white > 0.05:
+                            cleaned.append((clean, cls))
+                    st.session_state.detected_objs = cleaned if cleaned else None
+                    st.session_state.recommendations = None
+                    if not cleaned:
+                        st.warning("No valid fashion items detected.")
                 else:
-                    st.caption("No fashion objects detected.")
+                    st.session_state.detected_objs = None
+                    st.warning("No fashion items detected in this image.")
 
-        if prediction:
-            cropped_objs = [obj for obj in cropped_objs if obj.size > 0]
+    # --- Show bg-removed items + Step 2 button ---
+    if st.session_state.detected_objs:
+        labels = [cls for _, cls in st.session_state.detected_objs]
+        st.success(f"Detected: **{', '.join(labels)}**")
 
-            # The following comments visualized detected fashion objects
-            # st.caption(":rainbow[Detected Fashion Objects]")  
-            # if len(cropped_objs) == 1:
-            #    st.image(cropped_objs[0])
-            #else:
-                # If there's more than one images
-            #    fig, axes = plt.subplots(1, len(cropped_objs), figsize=(15, 3))
-            #    for i, obj in enumerate(cropped_objs):
-            #            axes[i].imshow(obj)
-            #            axes[i].axis('off')         
-            #    st.pyplot(fig)
+        cols = st.columns(len(st.session_state.detected_objs))
+        for col, (obj_clean, cls) in zip(cols, st.session_state.detected_objs):
+            col.image(obj_clean, caption=cls)
 
-            # st.caption(":rainbow[Recommended Items]")
-            with st.spinner("Finding similar items ..."):
-                boards = []
-                for i, obj in enumerate(cropped_objs):
-                    embedding = extract_img(obj, transformations)
-                    selected_neighbor_paths = similar_img_search(embedding, loaded_idx)
-                    boards.append(selected_neighbor_paths)
+        st.divider()
 
-                # Flatten list of lists into a single list of paths
-                all_boards = [path for sublist in boards for path in sublist]
+        if st.button('Show Recommendations', disabled=not INDEX_READY):
+            with st.spinner("Finding complementary items..."):
+                all_boards = []
+                for obj_clean, class_name in st.session_state.detected_objs:
+                    embedding = extract_img(obj_clean)
+                    comp_paths = complementary_search(embedding, cat_indices, class_name)
+                    all_boards.extend(comp_paths)
+                st.session_state.recommendations = all_boards[:6]
 
-                # Visualize recommended outfits
-                rec_fig = visualize_outfits(all_boards)
-                st.pyplot(rec_fig)
+    if st.session_state.get('recommendations'):
+        col_title, col_btn = st.columns([3, 1])
+        with col_title:
+            st.markdown("#### Recommended Items")
+        with col_btn:
+            can_save = st.session_state.input_array is not None and st.session_state.detected_objs is not None
+            if st.button("💾 Save to Gallery", use_container_width=True, disabled=not can_save):
+                save_session_to_gallery(
+                    st.session_state.input_array,
+                    st.session_state.detected_objs,
+                    st.session_state.recommendations
+                )
+                st.success("Saved! Check the Gallery page.", icon="✅")
+
+        rec_cols = st.columns(6)
+        for col, path in zip(rec_cols, st.session_state.recommendations):
+            with col:
+                st.image(path, use_column_width=True)
+                cat = os.path.basename(os.path.dirname(path))
+                st.caption(cat)
 
 if __name__ == "__main__":
     main()
