@@ -46,19 +46,18 @@ else:
     for entry in history:
         st.markdown(f"**{entry['timestamp']}**")
 
-        # Row: input | detected items | 6 recommendations
-        input_col, det_cols_area, rec_cols_area = st.columns([1, 1, 6])
+        input_col, det_col, rec_col = st.columns([1, 1, 6])
 
         with input_col:
             if os.path.exists(entry["input_path"]):
                 st.image(entry["input_path"], caption="Input", use_column_width=True)
 
-        with det_cols_area:
+        with det_col:
             for det_path, cls in entry.get("detected", []):
                 if os.path.exists(det_path):
                     st.image(det_path, caption=cls, use_column_width=True)
 
-        with rec_cols_area:
+        with rec_col:
             rec_items = entry.get("rec_items", [])
             if rec_items:
                 rec_subcols = st.columns(len(rec_items))
