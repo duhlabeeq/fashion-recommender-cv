@@ -1,108 +1,124 @@
-<h2 align="center">SmartStylist: A Fashion Recommender System powered by Computer Vision</h2>
-<br>
+<h2 align="center">StyleSenseAI — Personalized Fashion Recommendation System</h2>
 
-<center>
-<a href="https://www.joankusuma.com/post/smart-stylist-a-fashion-recommender-system-powered-by-computer-vision"><img src='https://img.shields.io/badge/Project_Page-SmartStylist-pink' alt='Project Page'></a> 
-<a href='https://www.joankusuma.com/post/object-detection-model-yolov5-on-fashion-images'><img src='https://img.shields.io/badge/Project_Page-ObjectDetection-blue' alt='Object Detection'></a> 
-<a href='https://www.joankusuma.com/post/powering-visual-search-with-image-embedding'><img src='https://img.shields.io/badge/Project_Page-VisualSearch-green'></a> 
-<a href='https://smartstylist.streamlit.app'><img src='https://img.shields.io/badge/Streamlit-Demo-red'></a>
-</center>
-<br>
-<br>
-<figure>
-    <center>
-        <img src="https://static.wixstatic.com/media/81114d_7f499b8207b848bc8bccfe1035a28b3d~mv2.png" alt="flowchart" height="350" width="600">
-    </center>
-</figure>
+<p align="center">
+  <img src="https://img.shields.io/badge/Project-StyleSenseAI-informational" alt="Project Name">
+  <img src="https://img.shields.io/badge/Tech-FashionCLIP%20%7C%20YOLOv5%20%7C%20FAISS-blue" alt="Core Tech">
+  <img src="https://img.shields.io/badge/Frontend-Streamlit-red" alt="Streamlit">
+</p>
 
-# Technical Features
-* <b>Object Detection Model:</b> Leveraged the power of the YOLOv5 model trained on fashion images to detect fashion objects in images
-* <b>Feature Extraction:</b> Utilized a Convolutional AutoEncoder implemented with PyTorch to extract latent features from detected fashion objects
-* <b>Similarity Search Index: </b> Implemented FAISS library to construct an index, facilitating the search for visually similar outfits based on their distinct attributes
+---
 
-#### For more information on object detection model and feature extraction process, check out my repositories here:
-* https://github.com/eyereece/yolo-object-detection-fashion
-* https://github.com/eyereece/visual-search-with-image-embedding
+## Overview
 
-<br>
+**StyleSenseAI** is a computer vision powered web application that takes an image of a fashion item and recommends a complete, color-matched outfit. Upload a shirt, pants, or shoes — the system detects the item, removes its background, and returns 6 complementary fashion pieces from a catalog of 34,000+ product images.
 
-# Project Demo
+---
 
-#### Online Streamlit Demo:
-Try the [online streamlit demo](https://smartstylist.streamlit.app).
+## How It Works
 
-<b>Homepage:</b>
+1. **Upload** an image containing a clothing item
+2. **Detect** — YOLOv5 identifies and crops the fashion item; background is removed automatically
+3. **Correct** — confirm or change the detected category (Shirts / Pants / Shoes)
+4. **Recommend** — FashionCLIP embeds the item; FAISS searches for the best color-complementary matches across 6 outfit categories
 
-<figure>
-    <center>
-        <img src="https://static.wixstatic.com/media/81114d_e21c115d1ce141388a4ffc3ecd31c8ad~mv2.gif" alt="preview">
-    </center>
-</figure>
+---
 
-<br>
+## Tech Stack
 
-<b>Gallery:</b>
+| Component | Technology |
+|---|---|
+| Object Detection | YOLOv5 (ONNX, 21 fashion classes) |
+| Feature Extraction | FashionCLIP (`patrickjohncyh/fashion-clip`) |
+| Similarity Search | FAISS IndexFlatL2 |
+| Background Removal | rembg (U2Net) |
+| Frontend | Streamlit |
+| Dataset | Kaggle Fashion Product Images (~34K images, 14 categories) |
 
-<figure>
-    <center>
-        <img src="https://static.wixstatic.com/media/81114d_47ce716d2b794785bb3b1b467b2ad425~mv2.gif" alt="preview">
-    </center>
-</figure>
+---
 
-<br>
+## Project Structure
 
-<b>Object Detection Model: </b>
-
-<figure>
-    <center>
-        <img src="https://static.wixstatic.com/media/81114d_f36652e9b7e844869ebb086e5f790beb~mv2.gif" alt="preview" height="500" width="500">
-    </center>
-</figure>
-
-<br>
-
-# Getting Started
-
-Clone the repository: 
-```bash
-git clone https://github.com/eyereece/fashion-recommender-cv.git
+```
+fashion-recommender-cv/
+│
+├── home.py                  # Main Streamlit page — upload, detect, recommend
+├── obj_detection.py         # YOLOv5 ONNX wrapper for object detection
+│
+├── pages/
+│   ├── gallery.py           # Gallery page — sample outfits + saved sessions
+│   └── my_wardrobe.py       # Wardrobe page — saved items by category
+│
+├── src/
+│   └── utilities.py         # FashionCLIP embedding, FAISS search, color matching, complement rules
+│
+├── models/
+│   ├── best.onnx            # YOLOv5 ONNX model (fine-tuned on fashion)
+│   └── data.yaml            # YOLO class labels config
+│
+├── pipeline/
+│   ├── organize_dataset.py  # Organises flat Kaggle dataset into category subfolders
+│   └── build_index.py       # Builds FashionCLIP embeddings + FAISS index
+│
+├── fashion-dataset/         # Organised dataset (14 category subfolders)
+├── gallery/                 # Sample query images for the gallery page
+│
+├── embeddings.pkl           # FashionCLIP embeddings for all dataset images
+├── flatIndex.index          # FAISS index file
+├── img_paths.pkl            # Image paths corresponding to embeddings
+│
+├── gallery_data/            # Saved gallery session images (auto-generated)
+├── gallery_history.pkl      # Gallery session history (auto-generated)
+├── wardrobe_images/         # Saved wardrobe item images (auto-generated)
+├── wardrobe.pkl             # Wardrobe index by category (auto-generated)
+│
+├── requirements.txt         # Python dependencies
+└── packages.txt             # System packages (for Streamlit Cloud deployment)
 ```
 
-Navigate to the project directory:
+---
+
+## Getting Started
+
+### 1. Clone the repository
 ```bash
+git clone https://github.com/duhlabeeq/fashion-recommender-cv.git
 cd fashion-recommender-cv
 ```
 
-Install dependencies:
+### 2. Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-Run the streamlit app:
+### 3. Build the FAISS index (first time only)
+Download the [Kaggle Fashion Product Images](https://www.kaggle.com/datasets/paramaggarwal/fashion-product-images-small) dataset, then run:
+```bash
+python pipeline/organize_dataset.py --csv archive/styles.csv --images archive/images --output fashion-dataset
+python pipeline/build_index.py --dataset fashion-dataset
+```
+
+### 4. Run the app
 ```bash
 streamlit run home.py
 ```
 
-<br>
+---
 
-# Usage
-* Upload an image of an outfit (background in white works best)
-* It currently only accepts jpg and png file
-* Click "Show Recommendations" button to retrieve recommendations
-* To update results, simply click on the "Show Recommendations" button again
-* Navigate over to the sidebar, at the "gallery", to explore sample results
+## Features
 
-<br>
+- **2-step flow** — detect first, recommend second
+- **Background removal** — clean product-style crops automatically
+- **Color-matched recommendations** — fashion color theory (complementary hues, neutral pairings)
+- **Category correction** — override wrong YOLO detections via dropdown
+- **My Wardrobe** — save and browse your uploaded items by category (Shirts / Pants / Shoes)
+- **Gallery** — save and revisit past outfit recommendation sessions
 
-# Dataset
+---
 
-#### The dataset used in this project is available <a href="https://github.com/eileenforwhat/complete-the-look-dataset/tree/master">here</a>:
-<div class="box">
-  <pre>
-    @online{Eileen2020,
-  author       = {Eileen Li, Eric Kim, Andrew Zhai, Josh Beal, Kunlong Gu},
-  title        = {Bootstrapping Complete The Look at Pinterest},
-  year         = {2020}
-}
-  </pre>
-</div>
+## Complement Rules
+
+| Input | Recommended (6 items) |
+|---|---|
+| Shirts | 2 Pants + 1 Belt + 1 Shoes + 1 Watch + 1 Sunglasses |
+| Pants | 2 Shirts + 1 Belt + 1 Shoes + 1 Watch + 1 Sunglasses |
+| Shoes | 2 Shirts + 1 Pants + 1 Belt + 1 Watch + 1 Sunglasses |

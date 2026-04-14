@@ -13,6 +13,33 @@ from src.utilities import (ExactIndex, extract_img, visualize_outfits,
 
 GALLERY_DATA_DIR = "gallery_data"
 GALLERY_HISTORY_FILE = "gallery_history.pkl"
+WARDROBE_DIR = "wardrobe_images"
+WARDROBE_FILE = "wardrobe.pkl"
+
+def load_wardrobe():
+    if os.path.exists(WARDROBE_FILE):
+        with open(WARDROBE_FILE, "rb") as f:
+            return pickle.load(f)
+    return {"Shirts": [], "Pants": [], "Shoes": []}
+
+def save_wardrobe(wardrobe):
+    with open(WARDROBE_FILE, "wb") as f:
+        pickle.dump(wardrobe, f)
+
+def add_to_wardrobe(detected_objs, corrected_classes):
+    """Save bg-removed input images into wardrobe by category."""
+    os.makedirs(WARDROBE_DIR, exist_ok=True)
+    wardrobe = load_wardrobe()
+    for i, (arr, _) in enumerate(detected_objs):
+        category = corrected_classes[i] if i < len(corrected_classes) else None
+        if category not in ("Shirts", "Pants", "Shoes"):
+            continue
+        filename = f"{category}_{uuid.uuid4().hex[:8]}.jpg"
+        path = os.path.join(WARDROBE_DIR, filename)
+        Image.fromarray(arr).save(path)
+        if path not in wardrobe[category]:
+            wardrobe[category].append(path)
+    save_wardrobe(wardrobe)
 
 def load_gallery_history():
     if os.path.exists(GALLERY_HISTORY_FILE):
@@ -65,19 +92,26 @@ def save_session_to_gallery(input_array, detected_objs, rec_paths):
 
 
 # --- UI Configurations --- #
-st.set_page_config(page_title="Smart Stylist powered by computer vision",
+st.set_page_config(page_title="StyleSenseAI - Your personal AI Stylist",
                    page_icon=":shopping_bags:"
                    )
 
-st.markdown("# :female_fairy: :shopping_bags:")
-st.markdown("# :rainbow[Your personal AI Stylist] :magic_wand:")
+st.markdown("# :rainbow[StyleSenseAI]")
+st.markdown("### Your personal AI Stylist")
 
 # --- Message --- #
-st.write("Hello, welcome to my project page! :smiley:")
-st.write("Smart Stylist is a computer vision powered web-app that lets you upload an image of an outfit and return recommendations on similar style. An image with white background works best. ")
-st.write("For more information on how the system works, check out the project page [here](https://www.joankusuma.com/post/smart-stylist-a-fashion-recommender-system-powered-by-computer-vision) ")
+st.write("StyleSenseAI is a computer vision powered web-app that lets you upload an image of an outfit and returns complementary style recommendations. An image with a white background works best.")
+
+st.markdown("""
+**Built with:**
+- **YOLOv5** — object detection to identify fashion items in your image
+- **FashionCLIP** — vision-language model for fashion-aware image embeddings
+- **FAISS** — fast similarity search across 34,000+ fashion product images
+- **rembg** — automatic background removal for clean item detection
+- **Streamlit** — interactive web interface
+""")
 st.divider()
-st.info("Check out the gallery in sidebar to get some ideas", icon="👈🏼")
+st.info("Check out the gallery in the sidebar to get some ideas", icon="👈")
 
 # --- Load Model and Data --- #
 with st.spinner('Please wait while your model is loading'):
@@ -124,10 +158,62 @@ def main():
         st.session_state.recommendations = None
     if 'input_array' not in st.session_state:
         st.session_state.input_array = None
+    if 'corrected_classes' not in st.session_state:
+        st.session_state.corrected_classes = []
+
+    # --- Check if coming from My Wardrobe (file-based handoff) ---
+    # Read from file once, then keep in session state for all subsequent reruns
+    if os.path.exists("wardrobe_selection.pkl"):
+        try:
+            with open("wardrobe_selection.pkl", "rb") as _f:
+                _sel = pickle.load(_f)
+            st.session_state.wardrobe_image = np.array(Image.open(_sel["path"]).convert("RGB"))
+            st.session_state.wardrobe_category = _sel["category"]
+            st.session_state.detected_objs = None
+            st.session_state.recommendations = None
+            st.session_state.corrected_classes = []
+        except Exception:
+            pass
+        os.remove("wardrobe_selection.pkl")
+
+    wardrobe_image = st.session_state.get('wardrobe_image')
+    wardrobe_category = st.session_state.get('wardrobe_category')
 
     uploaded = upload_image()
 
-    if uploaded:
+    # Determine the active image: wardrobe item takes priority
+    if wardrobe_image is not None:
+        image_array = wardrobe_image
+        st.session_state.input_array = image_array
+        st.info(f"Loaded from your wardrobe — **{wardrobe_category}**")
+        st.image(image_array)
+
+        if st.button('Detect Items'):
+            with st.spinner("Detecting items and removing backgrounds..."):
+                cropped_objs = yolo.crop_objects(image_array)
+                if cropped_objs:
+                    cropped_objs = [(obj, cls) for obj, cls in cropped_objs if obj.size > 0]
+                if cropped_objs:
+                    cleaned = []
+                    for obj, cls in cropped_objs:
+                        clean = remove_bg(obj)
+                        non_white = np.mean(clean < 250)
+                        if non_white > 0.05:
+                            cleaned.append((clean, cls))
+                    # Use the wardrobe category as the pre-selected class
+                    if cleaned:
+                        st.session_state.detected_objs = cleaned
+                        st.session_state.corrected_classes = [wardrobe_category] * len(cleaned)
+                        st.session_state.recommendations = None
+                    else:
+                        st.warning("No valid fashion items detected.")
+                else:
+                    st.warning("No fashion items detected in this image.")
+
+    elif uploaded:
+        # Clear any wardrobe selection when user uploads a fresh image
+        st.session_state.wardrobe_image = None
+        st.session_state.wardrobe_category = None
         image_obj = Image.open(uploaded)
         # Store as numpy array so it survives button reruns
         st.session_state.input_array = np.array(image_obj.convert("RGB"))
@@ -149,6 +235,8 @@ def main():
                             cleaned.append((clean, cls))
                     st.session_state.detected_objs = cleaned if cleaned else None
                     st.session_state.recommendations = None
+                    # Initialise corrected classes from YOLO detection
+                    st.session_state.corrected_classes = [cls for _, cls in cleaned] if cleaned else []
                     if not cleaned:
                         st.warning("No valid fashion items detected.")
                 else:
@@ -156,22 +244,35 @@ def main():
                     st.warning("No fashion items detected in this image.")
 
     # --- Show bg-removed items + Step 2 button ---
+    VALID_CLASSES = ['Shirts', 'Pants', 'Shoes']
+
     if st.session_state.detected_objs:
-        labels = [cls for _, cls in st.session_state.detected_objs]
-        st.success(f"Detected: **{', '.join(labels)}**")
+        # Pad corrected_classes if needed
+        while len(st.session_state.corrected_classes) < len(st.session_state.detected_objs):
+            st.session_state.corrected_classes.append(st.session_state.detected_objs[len(st.session_state.corrected_classes)][1])
 
         cols = st.columns(len(st.session_state.detected_objs))
-        for col, (obj_clean, cls) in zip(cols, st.session_state.detected_objs):
-            col.image(obj_clean, caption=cls)
+        for i, (col, (obj_clean, _)) in enumerate(zip(cols, st.session_state.detected_objs)):
+            with col:
+                st.image(obj_clean, use_column_width=True)
+                current = st.session_state.corrected_classes[i]
+                # If detected class not in our 3 supported types, prompt user to pick
+                if current in VALID_CLASSES:
+                    chosen = st.selectbox("Category", VALID_CLASSES, index=VALID_CLASSES.index(current), key=f"cls_{i}")
+                else:
+                    chosen = st.selectbox("Choose a category", VALID_CLASSES, index=None, key=f"cls_{i}", placeholder="Choose a category...")
+                st.session_state.corrected_classes[i] = chosen
 
         st.divider()
 
-        if st.button('Show Recommendations', disabled=not INDEX_READY):
+        all_selected = all(c is not None for c in st.session_state.corrected_classes)
+        if st.button('Show Recommendations', disabled=not INDEX_READY or not all_selected):
             with st.spinner("Finding complementary items..."):
                 all_boards = []
-                for obj_clean, class_name in st.session_state.detected_objs:
+                for i, (obj_clean, _) in enumerate(st.session_state.detected_objs):
+                    class_name = st.session_state.corrected_classes[i]
                     embedding = extract_img(obj_clean)
-                    comp_paths = complementary_search(embedding, cat_indices, class_name)
+                    comp_paths = complementary_search(embedding, cat_indices, class_name, query_image_array=obj_clean)
                     all_boards.extend(comp_paths)
                 st.session_state.recommendations = all_boards[:6]
 
@@ -187,14 +288,19 @@ def main():
                     st.session_state.detected_objs,
                     st.session_state.recommendations
                 )
-                st.success("Saved! Check the Gallery page.", icon="✅")
+                add_to_wardrobe(
+                    st.session_state.detected_objs,
+                    st.session_state.corrected_classes
+                )
+                st.success("Saved! Check the Gallery & My Wardrobe pages.", icon="✅")
 
         rec_cols = st.columns(6)
         for col, path in zip(rec_cols, st.session_state.recommendations):
             with col:
                 st.image(path, use_column_width=True)
                 cat = os.path.basename(os.path.dirname(path))
-                st.caption(cat)
+                label = 'Shirts' if cat == 'Shirts & Tops' else cat
+                st.caption(label)
 
 if __name__ == "__main__":
     main()

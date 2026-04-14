@@ -1,3 +1,4 @@
+import colorsys
 import faiss
 import random
 import os
@@ -54,20 +55,9 @@ def remove_bg(image_array):
 # Complement rules: YOLO class → index categories to search
 # ---------------------------------------------------------------------------
 COMPLEMENTS = {
-    'Shirts':    ['Pants', 'Skirts', 'Shoes', 'Handbags', 'Belts', 'Jewelry', 'Scarves & Shawls'],
-    'Pants':     ['Shirts & Tops', 'Shoes', 'Belts', 'Handbags'],
-    'Dresses':   ['Shoes', 'Handbags', 'Jewelry', 'Scarves & Shawls', 'Hats'],
-    'Skirts':    ['Shirts & Tops', 'Shoes', 'Handbags', 'Belts'],
-    'Coats':     ['Pants', 'Shoes', 'Scarves & Shawls', 'Handbags'],
-    'Shorts':    ['Shirts & Tops', 'Shoes', 'Handbags'],
-    'Jumpsuits': ['Shoes', 'Handbags', 'Jewelry', 'Belts'],
-    'Shoes':     ['Pants', 'Dresses', 'Handbags'],
-    'Handbags':  ['Shoes', 'Dresses', 'Pants'],
-    'Swimwear':  ['Shoes', 'Hats', 'Sunglasses', 'Handbags'],
-    'Jewelry':   ['Dresses', 'Shirts & Tops'],
-    'Scarves':   ['Coats & Jackets', 'Shirts & Tops'],
-    'Hats':      ['Coats & Jackets', 'Dresses'],
-    'Sunglasses': ['Hats', 'Dresses', 'Shirts & Tops'],
+    'Shirts': [('Pants', 2), ('Belts', 1), ('Shoes', 1), ('Watches', 1), ('Sunglasses', 1)],
+    'Pants':  [('Shirts & Tops', 2), ('Belts', 1), ('Shoes', 1), ('Watches', 1), ('Sunglasses', 1)],
+    'Shoes':  [('Shirts & Tops', 2), ('Pants', 1), ('Belts', 1), ('Watches', 1), ('Sunglasses', 1)],
 }
 
 # YOLO label → dataset category name when they differ
@@ -116,24 +106,103 @@ def build_category_indices(embeddings, image_paths):
     return cat_indices
 
 
-def complementary_search(query_vector, cat_indices, class_name, k=3):
-    """Return top-k complementary item paths for the detected garment."""
-    index_class = YOLO_TO_INDEX_CAT.get(class_name, class_name)
-    complement_cats = COMPLEMENTS.get(index_class, COMPLEMENTS.get(class_name, []))
+# ---------------------------------------------------------------------------
+# Color-based reranking helpers
+# ---------------------------------------------------------------------------
+def _dominant_color_array(image_array, size=60):
+    """Dominant non-white color from a numpy RGB array."""
+    img = Image.fromarray(image_array).convert("RGB").resize((size, size))
+    pixels = np.array(img).reshape(-1, 3).astype(float)
+    mask = ~np.all(pixels > 228, axis=1)   # ignore near-white bg
+    pixels = pixels[mask]
+    if len(pixels) < 5:
+        return None
+    return pixels.mean(axis=0)
 
+
+def _dominant_color_path(path, size=60):
+    """Dominant non-white color from an image file."""
+    try:
+        img = Image.open(path).convert("RGB").resize((size, size))
+        pixels = np.array(img).reshape(-1, 3).astype(float)
+        mask = ~np.all(pixels > 228, axis=1)
+        pixels = pixels[mask]
+        if len(pixels) < 5:
+            return None
+        return pixels.mean(axis=0)
+    except Exception:
+        return None
+
+
+def _to_hsv(rgb):
+    r, g, b = rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    return h * 360.0, s, v
+
+
+def _hue_dist(h1, h2):
+    d = abs(h1 - h2) % 360
+    return min(d, 360 - d)
+
+
+def _fashion_score(query_rgb, candidate_rgb):
+    """
+    Returns a score where lower = better color pairing.
+    Rules:
+      - Neutral input (grey/white/black) → prefer saturated candidates
+      - Colorful input → prefer neutrals or complementary hue (~180° apart)
+    """
+    qh, qs, _ = _to_hsv(query_rgb)
+    ch, cs, _ = _to_hsv(candidate_rgb)
+
+    if qs < 0.20:
+        # Neutral input: reward candidate saturation
+        return 1.0 - cs
+    else:
+        # Colorful input
+        if cs < 0.25:
+            # Neutral candidate always pairs well
+            return 0.0
+        # Reward complementary hue (180° apart = best, 0° = worst)
+        hue_dist = _hue_dist(qh, ch)
+        return 1.0 - (hue_dist / 180.0)
+
+
+def complementary_search(query_vector, cat_indices, class_name, query_image_array=None):
+    """Return complementary item paths reranked by fashion color theory."""
+    rules = COMPLEMENTS.get(class_name, [])
     query = query_vector.reshape(1, -1).astype('float32')
+
+    query_rgb = None
+    if query_image_array is not None:
+        query_rgb = _dominant_color_array(query_image_array)
+
     results = []
-    for cat in complement_cats:
+    for cat, count in rules:
         if cat not in cat_indices:
             continue
         idx, paths = cat_indices[cat]
-        n = min(k, idx.ntotal)
-        if n == 0:
+
+        # Fetch more candidates so we can rerank by color
+        n_candidates = min(count * 15, idx.ntotal)
+        if n_candidates == 0:
             continue
-        _, indices = idx.search(query, n)
-        for i in indices[0]:
-            if i >= 0:
-                results.append(paths[i])
+
+        _, indices = idx.search(query, n_candidates)
+        candidates = [paths[i] for i in indices[0] if i >= 0]
+
+        if query_rgb is not None:
+            scored = []
+            for p in candidates:
+                cand_rgb = _dominant_color_path(p)
+                score = _fashion_score(query_rgb, cand_rgb) if cand_rgb is not None else 0.5
+                scored.append((score, p))
+            scored.sort(key=lambda x: x[0])
+            selected = [p for _, p in scored[:count]]
+        else:
+            selected = candidates[:count]
+
+        results.extend(selected)
     return results
 
 

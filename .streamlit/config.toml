@@ -1,4 +1,17 @@
 [theme]
-base="light"
-primaryColor="#6b4bff"
-font="monospace"
+# Primary colors
+# Deep purple as the primary accent color
+primaryColor = "#9370DB"  # MediumPurple or similar accent
+
+# Background colors
+# Very dark gray/black for the main background (standard dark mode)
+backgroundColor = "#121212" 
+
+# Dark purple-gray for the secondary background (sidebar, card backs)
+secondaryBackgroundColor = "#1E1E2C" 
+
+# Text color
+textColor = "#FFFFFF"
+
+# Font settings
+font = "sans serif"
