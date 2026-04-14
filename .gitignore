@@ -1,0 +1,29 @@
+# Runtime generated data
+wardrobe_images/
+wardrobe.pkl
+gallery_data/
+gallery_history.pkl
+wardrobe_selection.pkl
+
+# FAISS index & embeddings (large, build locally with pipeline/)
+embeddings.pkl
+flatIndex.index
+img_paths.pkl
+
+# Dataset (large, download via Kaggle)
+fashion-dataset/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+src/__pycache__/
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
